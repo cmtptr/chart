@@ -1,0 +1,19 @@
+A neat little terminal charting program.  Usage:
+
+	chart [<title>]
+
+It reads newline-delimited numeric values from stdin and plots them.  For
+example, try the following BASH script:
+
+	#!/usr/bin/env bash
+	y=0
+	while true; do
+		y=$((y + RANDOM % 9 - 4))
+		if (( $y > 127 )); then
+			y=127
+		elif (( $y < -128 )); then
+			y=-128
+		fi
+		echo $y
+		sleep 0.5
+	done | ./chart '$RANDOM'
