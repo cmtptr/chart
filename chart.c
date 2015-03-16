@@ -232,20 +232,32 @@ int main(int argc, char **argv)
 	/* input loop */
 	char buf[32], *ptr = buf;
 	size_t n = sizeof buf;
-	for (int status; status = getnstr(ptr, n), status != ERR;) {
-		if (status == KEY_RESIZE) {
-			size_t len = strlen(ptr);
-			ptr += len;
-			n -= len;
-			endwin();
-			resize();
-		} else {
-			ptr = buf;
-			n = sizeof buf;
-			addpoint(atof(ptr));
+	for (int is_tmo = 0;;) {
+		for (int status; status = getnstr(ptr, n), status != ERR;) {
+			if (status == KEY_RESIZE) {
+				size_t len = strlen(ptr);
+				ptr += len;
+				n -= len;
+				endwin();
+				resize();
+			} else {
+				ptr = buf;
+				n = sizeof buf;
+				addpoint(atof(ptr));
+			}
+			/* aggregate input lines that are within 20ms of each
+			 * other to avoid flooding the terminal with updates
+			 * that are coming too rapidly to be seen */
+			timeout(20);
+			is_tmo = 1;
 		}
+		if (!is_tmo)
+			/* ERR must have been the result of EOF, not timeout */
+			break;
 		drawchart(title);
 		refresh();
+		timeout(-1);
+		is_tmo = 0;
 	}
 
 	/* shutdown */
