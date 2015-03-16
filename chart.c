@@ -145,11 +145,11 @@ static void drawchart(const char *title)
 
 	/* draw the chart */
 	WINDOW *win = newwin(drw.maxy, drw.maxx - drw.margin, 0, 0);
-	int y = 0, x = 1;
+	int y = 0, x = 1, maxy = drw.maxy - 2;  /* -2 for the border */
 	double dlast = 0.0;
 	for (size_t i = drw.begin; i != drw.end; i = (i + 1) % dsize) {
 		dlast = data[i].close;
-		y = drw.maxy - (dlast - drw.dmin) / drw.drange * drw.maxy + 1;
+		y = maxy - (dlast - drw.dmin) / drw.drange * (maxy - 1) + 0.5;
 		mvwaddch(win, y, x++, ACS_BULLET | A_BOLD);
 	}
 	box(win, 0, 0);
@@ -164,8 +164,8 @@ static void drawchart(const char *title)
 	/* draw the scale */
 	win = newwin(drw.maxy, drw.margin, 0, drw.maxx - drw.margin);
 	mvwprintw(win, 1, 0, " %g", drw.dmax);
+	mvwprintw(win, maxy, 0, " %g", drw.dmin);
 	mvwprintw(win, y, 0, "<%g", dlast);
-	mvwprintw(win, drw.maxy - 2, 0, " %g", drw.dmin);
 	wrefresh(win);
 	delwin(win);
 }
