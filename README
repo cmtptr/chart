@@ -1,19 +1,24 @@
-A neat little terminal charting program.  Usage:
+A neat little charting program that runs in the terminal.  Usage:
 
-	chart [<title>]
+	chart [<option>...] [<filename>]
 
-It reads newline-delimited numeric values from stdin and plots them.  For
-example, try the following BASH script:
+It reads newline-delimited numeric values from <filename> (or in the absence of
+the <filename> argument, or if <filename> is '-', stdin) and plots them on a
+chart that is drawn directly in the terminal.
+
+For example, try the following BASH script:
 
 	#!/usr/bin/env bash
 	y=0
 	while true; do
-		y=$((y + RANDOM % 9 - 4))
-		if (( $y > 127 )); then
-			y=127
-		elif (( $y < -128 )); then
-			y=-128
-		fi
-		echo $y
+		for i in $(seq 1 4); do
+			y=$((y + RANDOM % 9 - 4))
+			if (( $y > 127 )); then
+				y=127
+			elif (( $y < -128 )); then
+				y=-128
+			fi
+			echo $y
+		done
 		sleep 0.5
-	done | ./chart '$RANDOM'
+	done | ./chart -t '$RANDOM'
