@@ -27,9 +27,19 @@ options:\n\
                                        \"plus\", or \"ohlc\".\n\
   -t <title>, --title=<title>          Set the displayed title.\n\
 \n\
-chart reads newline-delimited numeric values from <filename> (or in the absence\n\
-of the <filename> argument, or if <filename> is '-', stdin) and plots them on a\n\
-chart that is drawn directly in the terminal.\n\
+chart reads numeric values from <filename> (or in the absence of the <filename>\n\
+argument, or if <filename> is '-', stdin) and plots them on a chart that is\n\
+drawn directly in the terminal.\n\
+\n\
+The input is to be formatted in lines of text as follows:\n\
+\n\
+  [,]<number>[,<number>...]\n\
+\n\
+Each line beginning with a number not prefixed by a comma is taken to represent\n\
+a new data point.  Each number prefixed by a comma (i.e., the first numbers in\n\
+lines which begin with commas and those numbers following other numbers on the\n\
+same line and delimited by commas) is taken to represent an update to the most\n\
+recent data point.\n\
 ";
 
 static size_t dsize, dlen, dptr = -1;
@@ -83,71 +93,138 @@ static void updpoint(double y)
 	data[dptr].close = y;
 }
 
-/* find some metrics to make everything fit in the terminal nicely */
-static struct draw {
+#define DRAW_FLAG_RANGE 0x1  /* the '-r <min>,<max>' argument was specified */
+#define DRAW_FLAG_TMO_EN 0x2  /* is timeout() enabled? */
+#define DRAW_FLAG_HAS_COLOR 0x4  /* does the terminal support color? */
+struct draw {
+	unsigned int flags;
+	const char *title;
+	int (*drawpoint)(const struct draw *, WINDOW *, int, int,
+			const struct ohlc *);
 	int maxy, maxx;
 	size_t begin, end;
 	double dmin, dmax, drange;
 	int margin;
-} initdraw(void)
+};
+
+/* calculate the screen-y value from a data-point-y value */
+static int screeny(const struct draw *drw, int screen_range, double y)
 {
-	struct draw drw;
-	getmaxyx(stdscr, drw.maxy, drw.maxx);
-	drw.end = (dptr + 1) % dsize;
+	return (drw->dmax - y) / drw->drange * (screen_range - 1) + 1;
+}
 
-	/* find the domain */
-	size_t maxx = drw.maxx - 2;  /* -2 to account for the border */
-	drw.begin = (drw.end - (dlen < maxx ? dlen : maxx)) % dsize;
+/* draw a data point using the "dot" style and return its screen y-value */
+static int drawpoint_dot(const struct draw *drw, WINDOW *win, int screen_range,
+		int x, const struct ohlc *pt)
+{
+	int y = screeny(drw, screen_range, pt->close);
+	mvwaddch(win, y, x, ACS_BULLET | A_BOLD);
+	return y;
+}
 
-	/* find the range */
-	drw.dmin = DBL_MAX;
-	drw.dmax = -DBL_MAX;
-	double dlast = 0.0;
-	for (size_t i = drw.begin; i != drw.end; i = (i + 1) % dsize) {
-		dlast = data[i].close;
-		if (data[i].low < drw.dmin)
-			drw.dmin = data[i].low;
-		if (data[i].high > drw.dmax)
-			drw.dmax = data[i].high;
+/* draw a data point using the "plus" style and return its screen y-value */
+static int drawpoint_plus(const struct draw *drw, WINDOW *win, int screen_range,
+		int x, const struct ohlc *pt)
+{
+	int y = screeny(drw, screen_range, pt->close);
+	mvwaddch(win, y, x, '+' | A_BOLD);
+	return y;
+}
+
+#define OHLC_CH_RIGHT 0x1
+#define OHLC_CH_UP 0x2
+#define OHLC_CH_DOWN 0x4
+#define OHLC_CH_LEFT 0x8
+static chtype ohlc_ch[0x10];
+
+/* draw a data point using the "ohlc" style and return its screen y-value */
+static int drawpoint_ohlc(const struct draw *drw, WINDOW *win, int screen_range,
+		int x, const struct ohlc *pt)
+{
+	attr_t attrs_orig;
+	short colors_orig;
+	wattr_get(win, &attrs_orig, &colors_orig, 0);
+	if (drw->flags & DRAW_FLAG_HAS_COLOR) {
+		if (pt->open < pt->close)
+			wattron(win, COLOR_PAIR(COLOR_GREEN));
+		else if (pt->open > pt->close)
+			wattron(win, COLOR_PAIR(COLOR_RED));
+	} else if (pt->open > pt->close)
+		wattron(win, A_BOLD);
+	int open = screeny(drw, screen_range, pt->open);
+	int high = screeny(drw, screen_range, pt->high);
+	int low = screeny(drw, screen_range, pt->low);
+	int close = screeny(drw, screen_range, pt->close);
+	mvwvline(win, high, x, ACS_VLINE, low - high + 1);
+	unsigned int ch = OHLC_CH_LEFT;
+	if (pt->low < pt->open)
+		ch |= OHLC_CH_DOWN;
+	if (pt->high > pt->open)
+		ch |= OHLC_CH_UP;
+	if (open == close) {
+		ch |= OHLC_CH_RIGHT;
+	} else {
+		mvwaddch(win, open, x, ohlc_ch[ch]);
+		ch = OHLC_CH_RIGHT;
+		if (pt->low < pt->close)
+			ch |= OHLC_CH_DOWN;
+		if (pt->high > pt->close)
+			ch |= OHLC_CH_UP;
 	}
-	drw.drange = drw.dmax - drw.dmin;
-
-	/* find the maximum width of the margin for the scale on the right */
-	drw.margin = snprintf(0, 0, "%g", drw.dmax);
-	int n = snprintf(0, 0, "%g", drw.dmin);
-	if (n > drw.margin)
-		drw.margin = n;
-	n = snprintf(0, 0, "%g", dlast);
-	if (n > drw.margin)
-		drw.margin = n;
-
-	/* adjust the domain with the newly-found chart width (still
-	 * accounting for the border) */
-	maxx = drw.maxx - drw.margin - 2;
-	drw.begin = (drw.end - (dlen < maxx ? dlen : maxx)) % dsize;
-
-	return drw;
+	mvwaddch(win, close, x, ohlc_ch[ch]);
+	wattr_set(win, attrs_orig, colors_orig, 0);
+	return close;
 }
 
 /* draw it! */
-static void drawchart(const char *title)
+static void drawchart(struct draw *drw)
 {
-	struct draw drw = initdraw();
+	/* find some metrics to make everything fit in the terminal nicely */
+	getmaxyx(stdscr, drw->maxy, drw->maxx);
+	drw->end = (dptr + 1) % dsize;
+
+	/* find the domain */
+	size_t maxx = drw->maxx - 2;  /* -2 to account for the border */
+	drw->begin = (drw->end - (dlen < maxx ? dlen : maxx)) % dsize;
+
+	/* find the range */
+	if (!(drw->flags & DRAW_FLAG_RANGE)) {
+		drw->dmin = DBL_MAX;
+		drw->dmax = -DBL_MAX;
+		for (size_t i = drw->begin; i != drw->end; i = (i + 1) % dsize) {
+			if (data[i].low < drw->dmin)
+				drw->dmin = data[i].low;
+			if (data[i].high > drw->dmax)
+				drw->dmax = data[i].high;
+		}
+	}
+	drw->drange = drw->dmax - drw->dmin;
+
+	/* find the maximum width of the margin for the scale on the right */
+	drw->margin = snprintf(0, 0, "%lg", drw->dmax);
+	int n = snprintf(0, 0, "%lg", drw->dmin);
+	if (n > drw->margin)
+		drw->margin = n;
+	double dlast = dlen ? data[dptr].close : 0.0;
+	n = snprintf(0, 0, "%lg", dlast);
+	if (n > drw->margin)
+		drw->margin = n;
+
+	/* adjust the domain with the newly-found chart width (still
+	 * accounting for the border) */
+	maxx = drw->maxx - drw->margin - 2;
+	drw->begin = (drw->end - (dlen < maxx ? dlen : maxx)) % dsize;
 
 	/* draw the chart */
-	WINDOW *win = newwin(drw.maxy, drw.maxx - drw.margin, 0, 0);
-	int y = 0, x = 1, maxy = drw.maxy - 2;  /* -2 for the border */
-	double dlast = 0.0;
-	for (size_t i = drw.begin; i != drw.end; i = (i + 1) % dsize) {
-		dlast = data[i].close;
-		y = maxy - (dlast - drw.dmin) / drw.drange * (maxy - 1) + 0.5;
-		mvwaddch(win, y, x++, ACS_BULLET | A_BOLD);
-	}
+	WINDOW *win = newwin(drw->maxy, drw->maxx - drw->margin, 0, 0);
+	int y = 0, x = 1, maxy = drw->maxy - 2;  /* -2 for the border */
+	for (size_t i = drw->begin; i != drw->end; i = (i + 1) % dsize)
+		y = drw->drawpoint(drw, win, maxy, x++, data + i);
 	x = getmaxx(win) - 1;  /* fix x to the right side of the chart */
 	box(win, 0, 0);
-	if (title) {
+	if (drw->title) {
 		wattron(win, A_BOLD | A_REVERSE);
-		mvwprintw(win, 0, 4, " %s ", title);
+		mvwprintw(win, 0, 4, " %s ", drw->title);
 		wattroff(win, A_BOLD | A_REVERSE);
 	}
 	mvwaddch(win, 1, x, ACS_RTEE);
@@ -157,18 +234,22 @@ static void drawchart(const char *title)
 	delwin(win);
 
 	/* draw the scale */
-	win = newwin(drw.maxy, drw.margin, 0, drw.maxx - drw.margin);
-	mvwprintw(win, 1, 0, "%g", drw.dmax);
-	mvwprintw(win, maxy, 0, "%g", drw.dmin);
-	mvwprintw(win, y, 0, "%g", dlast);
+	win = newwin(drw->maxy, drw->margin, 0, drw->maxx - drw->margin);
+	mvwprintw(win, 1, 0, "%lg", drw->dmax);
+	mvwprintw(win, maxy, 0, "%lg", drw->dmin);
+	mvwprintw(win, y, 0, "%lg", dlast);
+	wclrtoeol(win);
 	wrefresh(win);
 	delwin(win);
 }
 
 int main(int argc, char **argv)
 {
+	struct draw drw = {
+		.drawpoint = drawpoint_dot,
+	};
+
 	/* parse arguments */
-	const char *title = 0;
 	while (1) {
 		static struct option options[] = {
 			{"help", no_argument, 0, 'h'},
@@ -185,14 +266,29 @@ int main(int argc, char **argv)
 			printf(usage_long, argv[0]);
 			return 0;
 		case 'r':
-			/* TODO -r <min>,<max> */
+			if (sscanf(optarg, "%lg,%lg", &drw.dmin, &drw.dmax) < 2
+					|| drw.dmin > drw.dmax) {
+				fprintf(stderr, "%s: %s: Invalid range\n",
+						argv[0], optarg);
+				return 1;
+			}
+			drw.flags |= DRAW_FLAG_RANGE;
 			break;
 		case 's':
-			/* TODO -s dot|plus|ohlc */
-			(void)updpoint;
+			if (!strcmp(optarg, "dot")) {
+				drw.drawpoint = drawpoint_dot;
+			} else if (!strcmp(optarg, "plus")) {
+				drw.drawpoint = drawpoint_plus;
+			} else if (!strcmp(optarg, "ohlc")) {
+				drw.drawpoint = drawpoint_ohlc;
+			} else {
+				fprintf(stderr, "%s: %s: Invalid style\n",
+						argv[0], optarg);
+				return 1;
+			}
 			break;
 		case 't':
-			title = optarg;
+			drw.title = optarg;
 			break;
 		default:
 			fprintf(stderr, usage_short, argv[0]);
@@ -204,8 +300,8 @@ int main(int argc, char **argv)
 	int fd_stdin = STDIN_FILENO;
 	if (optind < argc && strcmp(argv[optind], "-")) {
 		const char *fn = argv[optind];
-		if (!title)
-			title = fn;
+		if (!drw.title)
+			drw.title = fn;
 		int fd = open(fn, O_RDONLY);
 		if (fd < 0) {
 			fprintf(stderr, "%s: %s: %s\n", argv[0], fn,
@@ -220,40 +316,85 @@ int main(int argc, char **argv)
 	/* initialize curses */
 	if (!initscr())
 		return 1;
+	if (has_colors()) {
+		start_color();
+#ifdef NCURSES_VERSION
+		use_default_colors();
+		init_pair(COLOR_RED, COLOR_RED, -1);
+		init_pair(COLOR_GREEN, COLOR_GREEN, -1);
+#else
+		init_pair(COLOR_RED, COLOR_RED, COLOR_BLACK);
+		init_pair(COLOR_GREEN, COLOR_GREEN, COLOR_BLACK);
+#endif
+		drw.flags |= DRAW_FLAG_HAS_COLOR;
+	}
 	curs_set(0);
 	noecho();
 	resize();
 
+	/* bits: [left][down][up][right] */
+	ohlc_ch[0x0] = '0';
+	ohlc_ch[0x1] = '1';
+	ohlc_ch[0x2] = '2';
+	ohlc_ch[0x3] = ACS_LLCORNER;
+	ohlc_ch[0x4] = '4';
+	ohlc_ch[0x5] = ACS_ULCORNER;
+	ohlc_ch[0x6] = ACS_VLINE;
+	ohlc_ch[0x7] = ACS_LTEE;
+	ohlc_ch[0x8] = '8';
+	ohlc_ch[0x9] = ACS_HLINE;
+	ohlc_ch[0xa] = ACS_LRCORNER;
+	ohlc_ch[0xb] = ACS_BTEE;
+	ohlc_ch[0xc] = ACS_URCORNER;
+	ohlc_ch[0xd] = ACS_TTEE;
+	ohlc_ch[0xe] = ACS_RTEE;
+	ohlc_ch[0xf] = ACS_PLUS;
+
 	/* input loop */
-	char buf[32], *ptr = buf;
+	char buf[BUFSIZ], *ptr = buf;
 	size_t n = sizeof buf;
-	for (int is_tmo = 0;;) {
+	while (1) {
 		for (int status; status = getnstr(ptr, n), status != ERR;) {
 			if (status == KEY_RESIZE) {
 				endwin();
 				resize();
-				is_tmo = 1;
+				drw.flags |= DRAW_FLAG_TMO_EN;
 				break;  /* redraw immediately */
+			}
+			if (*buf != ',') {
+				double y = strtod(buf, &ptr);
+				if (ptr == buf)
+					continue;
+				addpoint(y);
+			} else {
+				ptr = buf;
+			}
+			while (*ptr == ',') {
+				char *end;
+				double y = strtod(++ptr, &end);
+				if (end == ptr)
+					break;
+				updpoint(y);
+				ptr = end;
 			}
 			ptr = buf;
 			n = sizeof buf;
-			addpoint(atof(ptr));
 			/* aggregate input lines that are within 20ms of each
 			 * other to avoid flooding the terminal with updates
 			 * that are coming too rapidly to be seen */
 			timeout(20);
-			is_tmo = 1;
+			drw.flags |= DRAW_FLAG_TMO_EN;
 		}
-		if (!is_tmo)
+		if (!(drw.flags & DRAW_FLAG_TMO_EN))
 			/* ERR must have been the result of EOF, not timeout */
 			break;
-		drawchart(title);
+		drawchart(&drw);
 		refresh();
 		size_t len = strlen(ptr);
 		ptr += len;
 		n -= len;
 		timeout(-1);
-		is_tmo = 0;
+		drw.flags &= ~DRAW_FLAG_TMO_EN;
 	}
 
 	/* if the input was from a file (i.e., this wasn't a live stream), wait
@@ -261,12 +402,16 @@ int main(int argc, char **argv)
 	 * the nice chart I made for him or her */
 	if (fd_stdin != STDIN_FILENO) {
 		dup2(fd_stdin, STDIN_FILENO);
-		char *title2 = malloc(snprintf(0, 0, "%s (closed)", title));
-		sprintf(title2, "%s (closed)", title);
-		do {
-			drawchart(title2);
+		char *title = malloc(snprintf(0, 0, "%s (closed)", drw.title));
+		sprintf(title, "%s (closed)", drw.title);
+		drw.title = title;
+		while (1) {
+			drawchart(&drw);
 			refresh();
-		} while (getch() == KEY_RESIZE);
+			if (getch() != KEY_RESIZE)
+				break;
+			endwin();
+		}
 	}
 
 	/* shutdown */

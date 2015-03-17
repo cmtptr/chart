@@ -2,9 +2,19 @@ A neat little charting program that runs in the terminal.  Usage:
 
 	chart [<option>...] [<filename>]
 
-It reads newline-delimited numeric values from <filename> (or in the absence of
-the <filename> argument, or if <filename> is '-', stdin) and plots them on a
-chart that is drawn directly in the terminal.
+It reads numeric values from <filename> (or in the absence of the <filename>
+argument, or if <filename> is '-', stdin) and plots them on a chart that is
+drawn directly in the terminal.
+
+The input is to be formatted in lines of text as follows:
+
+	[,]<number>[,<number>...]
+
+Each line beginning with a number not prefixed by a comma is taken to represent
+a new data point.  Each number prefixed by a comma (i.e., the first numbers in
+lines which begin with commas and those numbers following other numbers on the
+same line and delimited by commas) is taken to represent an update to the most
+recent data point.
 
 For example, try the following BASH script:
 
@@ -18,7 +28,10 @@ For example, try the following BASH script:
 			elif (( $y < -128 )); then
 				y=-128
 			fi
+			if (( $i != 1 )); then
+				echo -n ,
+			fi
 			echo $y
 		done
 		sleep 0.5
-	done | ./chart -t '$RANDOM'
+	done | ./chart -s ohlc -t '$RANDOM' "$@"
