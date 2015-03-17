@@ -1,10 +1,14 @@
-A neat little charting program that runs in the terminal.  Usage:
-
-	chart [<option>...] [<filename>]
+==== SYNOPSIS ==================================================================
+A neat little charting program that runs in the terminal.
 
 It reads numeric values from <filename> (or in the absence of the <filename>
 argument, or if <filename> is '-', stdin) and plots them on a chart that is
 drawn directly in the terminal.
+
+==== USAGE =====================================================================
+Invoke chart with the syntax:
+
+	chart [<option>...] [<filename>]
 
 The input is to be formatted in lines of text as follows:
 
@@ -16,6 +20,24 @@ lines which begin with commas and those numbers following other numbers on the
 same line and delimited by commas) is taken to represent an update to the most
 recent data point.
 
+==== DEPENDENCIES ==============================================================
+chart depends on curses.
+
+==== INSTALLATION ==============================================================
+To build chart, type:
+
+	make
+
+To install chart:
+
+	make [DESTDIR=<path>] install
+
+If not specified, DESTDIR is "/usr/local" by default.
+
+==== LICENSE ===================================================================
+See LICENSE.
+
+==== EXAMPLE ===================================================================
 For example, try the following BASH script:
 
 	#!/usr/bin/env bash
