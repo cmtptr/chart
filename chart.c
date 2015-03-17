@@ -95,46 +95,37 @@ static struct draw {
 	getmaxyx(stdscr, drw.maxy, drw.maxx);
 	drw.end = (dptr + 1) % dsize;
 
-	/* truncating the domain might change the dmin and dmax values, which
-	 * could result in a new margin, so, in attempt to maximize the chart
-	 * area, loop until either margin doesn't change or the change would
-	 * result in it growing (which would probably lead to wiggling
-	 * back-and-forth for eternity) */
+	/* find the domain */
 	size_t maxx = drw.maxx - 2;  /* -2 to account for the border */
-	int margin = INT_MAX;
-	do {
-		drw.margin = margin;
+	drw.begin = (drw.end - (dlen < maxx ? dlen : maxx)) % dsize;
 
-		/* find the domain */
-		drw.begin = (drw.end - (dlen < maxx ? dlen : maxx)) % dsize;
+	/* find the range */
+	drw.dmin = DBL_MAX;
+	drw.dmax = -DBL_MAX;
+	double dlast = 0.0;
+	for (size_t i = drw.begin; i != drw.end; i = (i + 1) % dsize) {
+		dlast = data[i].close;
+		if (data[i].low < drw.dmin)
+			drw.dmin = data[i].low;
+		if (data[i].high > drw.dmax)
+			drw.dmax = data[i].high;
+	}
+	drw.drange = drw.dmax - drw.dmin;
 
-		/* find the range */
-		drw.dmin = DBL_MAX;
-		drw.dmax = -DBL_MAX;
-		double dlast = 0.0;
-		for (size_t i = drw.begin; i != drw.end; i = (i + 1) % dsize) {
-			dlast = data[i].close;
-			if (data[i].low < drw.dmin)
-				drw.dmin = data[i].low;
-			if (data[i].high > drw.dmax)
-				drw.dmax = data[i].high;
-		}
-		drw.drange = drw.dmax - drw.dmin;
+	/* find the maximum width of the margin for the scale on the right */
+	drw.margin = snprintf(0, 0, "%g", drw.dmax);
+	int n = snprintf(0, 0, "%g", drw.dmin);
+	if (n > drw.margin)
+		drw.margin = n;
+	n = snprintf(0, 0, "%g", dlast);
+	if (n > drw.margin)
+		drw.margin = n;
 
-		/* find the maximum width of the scale on the right */
-		int n = snprintf(0, 0, " %g", drw.dmax);
-		margin = n;
-		n = snprintf(0, 0, " %g", drw.dmin);
-		if (n > margin)
-			margin = n;
-		n = snprintf(0, 0, "<%g", dlast);
-		if (n > margin)
-			margin = n;
+	/* adjust the domain with the newly-found chart width (still
+	 * accounting for the border) */
+	maxx = drw.maxx - drw.margin - 2;
+	drw.begin = (drw.end - (dlen < maxx ? dlen : maxx)) % dsize;
 
-		/* adjust maxx to the newly-found chart width (still accounting
-		 * for the border) */
-		maxx = drw.maxx - margin - 2;
-	} while (margin < drw.margin);
 	return drw;
 }
 
@@ -152,20 +143,24 @@ static void drawchart(const char *title)
 		y = maxy - (dlast - drw.dmin) / drw.drange * (maxy - 1) + 0.5;
 		mvwaddch(win, y, x++, ACS_BULLET | A_BOLD);
 	}
+	x = getmaxx(win) - 1;  /* fix x to the right side of the chart */
 	box(win, 0, 0);
 	if (title) {
 		wattron(win, A_BOLD | A_REVERSE);
 		mvwprintw(win, 0, 4, " %s ", title);
 		wattroff(win, A_BOLD | A_REVERSE);
 	}
+	mvwaddch(win, 1, x, ACS_RTEE);
+	mvwaddch(win, maxy, x, ACS_RTEE);
+	mvwaddch(win, y, x, ACS_RTEE);
 	wrefresh(win);
 	delwin(win);
 
 	/* draw the scale */
 	win = newwin(drw.maxy, drw.margin, 0, drw.maxx - drw.margin);
-	mvwprintw(win, 1, 0, " %g", drw.dmax);
-	mvwprintw(win, maxy, 0, " %g", drw.dmin);
-	mvwprintw(win, y, 0, "<%g", dlast);
+	mvwprintw(win, 1, 0, "%g", drw.dmax);
+	mvwprintw(win, maxy, 0, "%g", drw.dmin);
+	mvwprintw(win, y, 0, "%g", dlast);
 	wrefresh(win);
 	delwin(win);
 }
@@ -235,16 +230,13 @@ int main(int argc, char **argv)
 	for (int is_tmo = 0;;) {
 		for (int status; status = getnstr(ptr, n), status != ERR;) {
 			if (status == KEY_RESIZE) {
-				size_t len = strlen(ptr);
-				ptr += len;
-				n -= len;
 				endwin();
 				resize();
-			} else {
-				ptr = buf;
-				n = sizeof buf;
-				addpoint(atof(ptr));
+				break;  /* redraw immediately */
 			}
+			ptr = buf;
+			n = sizeof buf;
+			addpoint(atof(ptr));
 			/* aggregate input lines that are within 20ms of each
 			 * other to avoid flooding the terminal with updates
 			 * that are coming too rapidly to be seen */
@@ -256,11 +248,16 @@ int main(int argc, char **argv)
 			break;
 		drawchart(title);
 		refresh();
+		size_t len = strlen(ptr);
+		ptr += len;
+		n -= len;
 		timeout(-1);
 		is_tmo = 0;
 	}
 
-	/* shutdown */
+	/* if the input was from a file (i.e., this wasn't a live stream), wait
+	 * for a keypress before exiting so that the user has a chance to see
+	 * the nice chart I made for him or her */
 	if (fd_stdin != STDIN_FILENO) {
 		dup2(fd_stdin, STDIN_FILENO);
 		char *title2 = malloc(snprintf(0, 0, "%s (closed)", title));
@@ -270,6 +267,8 @@ int main(int argc, char **argv)
 			refresh();
 		} while (getch() == KEY_RESIZE);
 	}
+
+	/* shutdown */
 	endwin();
 	return 0;
 }
