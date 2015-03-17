@@ -232,6 +232,7 @@ int main(int argc, char **argv)
 			if (status == KEY_RESIZE) {
 				endwin();
 				resize();
+				is_tmo = 1;
 				break;  /* redraw immediately */
 			}
 			ptr = buf;
