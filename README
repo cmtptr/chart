@@ -30,9 +30,9 @@ To build chart, type:
 
 To install chart:
 
-	make [DESTDIR=<path>] install
+	make [DESTDIR=<path>] [PREFIX=<path>] install
 
-If not specified, DESTDIR is "/usr/local" by default.
+If not specified, DESTDIR is "" and PREFIX is "/usr/local" by default.
 
 ==== LICENSE ===================================================================
 See LICENSE.

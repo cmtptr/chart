@@ -1,7 +1,7 @@
 CFLAGS ?= -O2 -pipe
 CPPFLAGS += -pedantic -std=c99 -Wall -Werror -Wextra
-DESTDIR ?= /usr/local
 LDADD := -lcurses
+PREFIX ?= /usr/local
 
 sources := chart.c
 objects := $(sources:.c=.o)
@@ -14,7 +14,8 @@ clean:
 	$(RM) $(objects) $(bin)
 
 install: $(bin)
-	install $(bin) "$(DESTDIR)/bin/$(bin)"
+	install -d "$(DESTDIR)$(PREFIX)/bin"
+	install $(bin) "$(DESTDIR)$(PREFIX)/bin/$(bin)"
 
 
 .SUFFIXES:
