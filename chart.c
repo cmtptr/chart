@@ -42,7 +42,7 @@ same line and delimited by commas) is taken to represent an update to the most\n
 recent data point.\n\
 ";
 
-static size_t dsize, dlen, dptr = -1;
+static size_t dsize, dlen, dptr;
 static struct ohlc {
 	double open;
 	double high;
@@ -53,16 +53,20 @@ static struct ohlc {
 /* grow the data buffer to fill the screen */
 static void resize(void)
 {
-	int width = getmaxx(stdscr);
-	size_t newsize = dsize ? dsize : 1;
-	while (newsize < (size_t)width)  /* round up to the next binary number */
-		newsize <<= 1;
-	if (newsize != dsize) {
+	size_t newsize = getmaxx(stdscr) - 3;  /* border and at least one digit */
+	/* round up to the next power of two */
+	--newsize;
+	for (int i = 1; i <= 16; i <<= 1)
+		newsize |= newsize >> i;
+	newsize = (newsize & 0x7ff) + 1;  /* but don't let it get too big */
+	if (newsize > dsize) {
 		struct ohlc *newdata = malloc(newsize * sizeof *newdata);
-		size_t len = dptr + 1;
-		memcpy(newdata, data, len * sizeof *newdata);
-		memcpy(newdata + newsize - dsize + len, data + len,
-				(dlen - len) * sizeof *newdata);
+		if (dlen) {
+			size_t len = dptr + 1;
+			memcpy(newdata, data, len * sizeof *newdata);
+			memcpy(newdata + newsize - dsize + len, data + len,
+					(dlen - len) * sizeof *newdata);
+		}
 		free(data);
 		dsize = newsize;
 		data = newdata;
