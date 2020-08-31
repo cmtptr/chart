@@ -42,7 +42,7 @@ same line and delimited by commas) is taken to represent an update to the most\n
 recent data point.\n\
 ";
 
-static size_t dsize, dlen, dptr;
+static size_t dmask, dlen, dptr;
 static struct ohlc {
 	double open;
 	double high;
@@ -59,16 +59,15 @@ static void resize(void)
 	for (int i = 1; i <= 16; i <<= 1)
 		newsize |= newsize >> i;
 	newsize = (newsize & 0x7ff) + 1;  /* but don't let it get too big */
-	if (newsize > dsize) {
+	if (newsize > dmask + 1) {
 		struct ohlc *newdata = malloc(newsize * sizeof *newdata);
 		if (dlen) {
-			size_t len = dptr + 1;
-			memcpy(newdata, data, len * sizeof *newdata);
-			memcpy(newdata + newsize - dsize + len, data + len,
-					(dlen - len) * sizeof *newdata);
+			memcpy(newdata, data, dptr * sizeof *newdata);
+			memcpy(newdata + newsize - dmask - 1 + dptr, data + dptr,
+					(dlen - dptr) * sizeof *newdata);
 		}
 		free(data);
-		dsize = newsize;
+		dmask = newsize - 1;
 		data = newdata;
 	}
 }
@@ -76,25 +75,26 @@ static void resize(void)
 /* add a new point to the data set */
 static void addpoint(double y)
 {
-	dptr = (dptr + 1) % dsize;
 	data[dptr] = (struct ohlc){
 		.open = y,
 		.high = y,
 		.low = y,
 		.close = y,
 	};
-	if (dlen < dsize)
+	if (dlen <= dmask)
 		++dlen;
+	dptr = (dptr + 1) & dmask;
 }
 
 /* update the most recent point already in the data set */
 static void updpoint(double y)
 {
-	if (y > data[dptr].high)
-		data[dptr].high = y;
-	else if (y < data[dptr].low)
-		data[dptr].low = y;
-	data[dptr].close = y;
+	struct ohlc *d = data + ((dptr - 1) & dmask);
+	if (y > d->high)
+		d->high = y;
+	else if (y < d->low)
+		d->low = y;
+	d->close = y;
 }
 
 #define DRAW_FLAG_RANGE 0x1  /* the '-r <min>,<max>' argument was specified */
@@ -185,17 +185,17 @@ static void drawchart(struct draw *drw)
 {
 	/* find some metrics to make everything fit in the terminal nicely */
 	getmaxyx(stdscr, drw->maxy, drw->maxx);
-	drw->end = (dptr + 1) % dsize;
+	drw->end = dptr;
 
 	/* find the domain */
 	size_t maxx = drw->maxx - 2;  /* -2 to account for the border */
-	drw->begin = (drw->end - (dlen < maxx ? dlen : maxx)) % dsize;
+	drw->begin = (drw->end - (dlen < maxx ? dlen : maxx)) & dmask;
 
 	/* find the range */
 	if (!(drw->flags & DRAW_FLAG_RANGE)) {
 		drw->dmin = DBL_MAX;
 		drw->dmax = -DBL_MAX;
-		for (size_t i = drw->begin; i != drw->end; i = (i + 1) % dsize) {
+		for (size_t i = drw->begin; i != drw->end; i = (i + 1) & dmask) {
 			if (data[i].low < drw->dmin)
 				drw->dmin = data[i].low;
 			if (data[i].high > drw->dmax)
@@ -217,12 +217,12 @@ static void drawchart(struct draw *drw)
 	/* adjust the domain with the newly-found chart width (still
 	 * accounting for the border) */
 	maxx = drw->maxx - drw->margin - 2;
-	drw->begin = (drw->end - (dlen < maxx ? dlen : maxx)) % dsize;
+	drw->begin = (drw->end - (dlen < maxx ? dlen : maxx)) & dmask;
 
 	/* draw the chart */
 	WINDOW *win = newwin(drw->maxy, drw->maxx - drw->margin, 0, 0);
 	int y = 0, x = 1, maxy = drw->maxy - 2;  /* -2 for the border */
-	for (size_t i = drw->begin; i != drw->end; i = (i + 1) % dsize)
+	for (size_t i = drw->begin; i != drw->end; i = (i + 1) & dmask)
 		y = drw->drawpoint(drw, win, maxy, x++, data + i);
 	x = getmaxx(win) - 1;  /* fix x to the right side of the chart */
 	box(win, 0, 0);
