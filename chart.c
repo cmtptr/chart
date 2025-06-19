@@ -209,7 +209,7 @@ static void drawchart(struct draw *drw)
 	int n = snprintf(0, 0, "%lg", drw->dmin);
 	if (n > drw->margin)
 		drw->margin = n;
-	double dlast = dlen ? data[dptr].close : 0.0;
+	double dlast = dlen ? data[(dptr - 1) & dmask].close : 0.0;
 	n = snprintf(0, 0, "%lg", dlast);
 	if (n > drw->margin)
 		drw->margin = n;
