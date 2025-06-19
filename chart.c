@@ -247,6 +247,25 @@ static void drawchart(struct draw *drw)
 	delwin(win);
 }
 
+/* getnstr() substitute that doesn't set raw */
+static int getnstr_noraw(char *s, int n)
+{
+	int status = OK;
+	--n;  /* reserve room for the '\0' terminator */
+	for (; n >= 0; --n) {
+		int c = getch();
+		if ((c < 0) || (0x7f < c)) {
+			status = c;
+			break;
+		}
+		if ((c == '\n') || (c == '\r'))
+			break;
+		*(s++) = c;
+	}
+	*s = '\0';
+	return status;
+}
+
 int main(int argc, char **argv)
 {
 	struct draw drw = {
@@ -334,6 +353,8 @@ int main(int argc, char **argv)
 	}
 	curs_set(0);
 	noecho();
+	noraw();
+	cbreak();
 	resize();
 
 	/* bits: [left][down][up][right] */
@@ -358,7 +379,7 @@ int main(int argc, char **argv)
 	char buf[BUFSIZ], *ptr = buf;
 	size_t n = sizeof buf;
 	while (1) {
-		for (int status; status = getnstr(ptr, n), status != ERR;) {
+		for (int status; status = getnstr_noraw(ptr, n), status != ERR;) {
 			if (status == KEY_RESIZE) {
 				endwin();
 				resize();
